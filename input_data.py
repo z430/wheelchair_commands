@@ -67,7 +67,7 @@ class GetData:
 
         self.model_architecture = 'conv'
         self.audio_feature = feature
-        self.speech_features = audio_util.SpeechFeatures()
+        self.audio_feature_extraction = audio_util.SpeechFeatures()
 
         # initialization
         self.model_settings = self.prepare_model_setting()
@@ -81,10 +81,10 @@ class GetData:
         audio = np.ones(self.sample_rate * int(self.clip_duration_ms))
         print(f"audio length: ")
         if feature_name is "cgram":
-            f = self.speech_features.cgram_(audio, self.sample_rate)
+            f = self.audio_feature_extraction.cgram_(audio, self.sample_rate)
             return f.shape
         elif feature_name is "mfcc":
-            f = self.speech_features.mfcc(audio)
+            f = self.audio_feature_extraction.mfcc(audio)
             return f.shape
         else:
             return None
@@ -362,10 +362,16 @@ class GetData:
         # Data and labels will be populated and returned.
         input_size = np.ones(self.sample_rate)
         # use GLCM features
-        input_size = self.speech_features.cgram_(input_size, self.sample_rate)
-        input_size = input_size.flatten()
-        # print("input_size", input_size.shape)
-        input_size = input_size.shape[0]
+        if self.audio_feature == 'cgram':
+            input_size = self.audio_feature_extraction.cgram_(input_size, self.sample_rate)
+            input_size = input_size.flatten()
+            # print("input_size", input_size.shape)
+            input_size = input_size.shape[0]
+        elif self.audio_feature == 'mfcc':
+            input_size = self.audio_feature_extraction.mfcc(input_size, self.sample_rate)
+            input_size = input_size.flatten()
+            # print("input_size", input_size.shape)
+            input_size = input_size.shape[0]
         data = np.zeros((sample_count, input_size))
         labels = np.zeros((sample_count, self.model_settings['label_count']))
         desired_samples = self.model_settings['desired_samples']
@@ -450,7 +456,10 @@ class GetData:
             wav_result = self.audio_util.processing_audio(
                 input_data, normalize=True)
             # feature extraction
-            feature = self.speech_features.cgram_(wav_result, 16000)
+            if self.audio_feature == 'cgram':
+                feature = self.audio_feature_extraction.cgram_(wav_result, self.sample_rate)
+            elif self.audio_feature == 'mfcc':
+                feature = self.audio_feature_extraction.mfcc(wav_result, self.sample_rate)
             # feature = self.speech_features.mfcc(wav_result)
             # feature = self.speech_features.mfcc_psf(wav_result)
             feature = feature.flatten()
