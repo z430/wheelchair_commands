@@ -16,10 +16,8 @@ def save_experiment_data():
     saving experiment data is not storage efficient, but it is really useful when
     we only experiment with the model not the data.
     """
-    Data = input_data.GetData()
-    Data.wanted_words = 'left,right,forward,backward,stop,go'
-    Data.data_dir = '../data/train/'
-    Data.validation_percentage = 0.0
+    wanted_words = 'left,right,forward,backward,stop,go'
+    Data = input_data.GetData(wanted_words=wanted_words)
     print(Data.validation_percentage)
     Data.initialize()
 

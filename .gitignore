@@ -3,3 +3,5 @@ __pycache__/
 retrain_logs/
 data/
 *.npy
+.vscode/*
+.vscode/settings.json

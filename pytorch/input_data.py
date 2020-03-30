@@ -19,17 +19,20 @@ from sklearn.preprocessing import OneHotEncoder
 import tqdm
 
 from keras import utils
-import tensorflow as tf
 import urllib
+import pandas as pd
 
 import audio_utility as audio_util
+
+from torch.utils.data import Dataset, DataLoader
 
 
 class GetData:
 
-    def __init__(self, wanted_words='marvin', feature='cgram'):
+    def __init__(self, prepare_data=True, wanted_words='marvin', feature='cgram'):
 
         # don't change this parameter
+        self.prepare_data = prepare_data
         self.MAX_NUM_WAVS_PER_CLASS = 2 ** 27 - 1  # ~134MB
         self.RANDOM_SEED = 59185
         self.SILENCE_INDEX = 0
@@ -73,9 +76,8 @@ class GetData:
         self.model_settings = self.prepare_model_setting()
         self.audio_util = audio_util.AudioUtil(self.model_settings)
         self.words_list = self.prepare_word_list(self.wanted_words)
-        print(self.words_list)
         # get input shape
-        self.input_shape = self.get_input_shape(feature)
+        self.input_shape = self.get_input_shape(self.audio_feature)
 
     def get_input_shape(self, feature_name):
         audio = np.ones(self.sample_rate * int(self.clip_duration_ms))
@@ -90,9 +92,10 @@ class GetData:
             return None
 
     def initialize(self):
-        self.prepare_data_index(self.silence_percentage, self.unknown_percentage, self.wanted_words,
-                                self.validation_percentage, self.testing_percentage)
-        self.prepare_background_data()
+        if self.prepare_data:
+            self.prepare_data_index(self.silence_percentage, self.unknown_percentage, self.wanted_words,
+                                    self.validation_percentage, self.testing_percentage)
+            self.prepare_background_data()
 
     @staticmethod
     def prepare_word_list(wanted_words):
@@ -110,7 +113,7 @@ class GetData:
             'label_count': len(self.prepare_word_list(self.wanted_words)),
             'sample_rate': self.sample_rate
         }
-
+    
     def maybe_download_and_extract_dataset(self, data_url, dest_directory):
         """
             Download and extract data set tar file.
@@ -125,11 +128,11 @@ class GetData:
         """
         if not data_url:
             return
-        if not os.path.exists(dest_directory):
-            os.makedirs(dest_directory)
         filename = data_url.split('/')[-1]
         filepath = os.path.join(dest_directory, filename)
         if not os.path.exists(filepath):
+            if not os.path.exists(dest_directory):
+                os.makedirs(dest_directory)
 
             def _progress(count, block_size, total_size):
                 sys.stdout.write(
@@ -141,9 +144,9 @@ class GetData:
                 filepath, _ = urllib.request.urlretrieve(
                     data_url, filepath, _progress)
             except:
-                tf.logging.error('Failed to download URL: %s to folder: %s', data_url,
+                print('Failed to download URL: %s to folder: %s', data_url,
                                  filepath)
-                tf.logging.error('Please make sure you have enough free space and'
+                print('Please make sure you have enough free space and'
                                  ' an internet connection')
                 raise
             print()
@@ -151,8 +154,7 @@ class GetData:
             tf.logging.info('Successfully downloaded %s (%d bytes)', filename,
                             statinfo.st_size)
             tarfile.open(filepath, 'r:gz').extractall(dest_directory)
-        else:
-            print("Dataset ready")
+
 
     def which_set(self, filename, validation_percentage, testing_percentage):
         """
@@ -359,130 +361,98 @@ class GetData:
             sample_count = len(candidates)
         else:
             sample_count = max(0, min(how_many, len(candidates) - offset))
-        # Data and labels will be populated and returned.
-        input_size = np.ones(self.sample_rate)
-        # use GLCM features
-        input_size = self.speech_features.cgram_(input_size, self.sample_rate)
-        input_size = input_size.flatten()
-        # print("input_size", input_size.shape)
-        input_size = input_size.shape[0]
-        data = np.zeros((sample_count, input_size))
-        labels = np.zeros((sample_count, self.model_settings['label_count']))
-        desired_samples = self.model_settings['desired_samples']
-        use_background = self.background_data and (mode == 'training')
+        
         pick_deterministically = (mode != 'training')
-        time_shift = int((self.time_shift_ms * self.sample_rate) / 1000)
+        data = list(np.zeros((sample_count)))
 
-        # label_str = []
-        # print(sample_count, data.shape, labels.shape, desired_samples, use_background, pick_deterministically)
-
+        # processing features
+        self.time_shift = int((self.time_shift_ms * self.sample_rate) / 1000)
+        self.use_background = self.background_data and (mode == 'training')
+        self.desired_samples = self.model_settings['desired_samples']
+        
         for i in tqdm.tqdm(range(offset, offset + sample_count)):
-            # for i in range(offset, offset + sample_count):
+           
             if how_many == -1 or pick_deterministically:
                 sample_index = i
             else:
                 sample_index = np.random.randint(len(candidates))
-
             sample = candidates[sample_index]
-            # print(sample)
-            # time shifting setting
-            if time_shift > 0:
-                time_shift_amount = np.random.randint(-time_shift, time_shift)
-            else:
-                time_shift_amount = 0
-            if time_shift_amount > 0:
-                time_shift_padding = [time_shift_amount, 0]
-                time_shift_offset = 0
-            else:
-                time_shift_padding = [0, -time_shift_amount]
-                time_shift_offset = -time_shift_amount
-
-            # print(time_shift_padding, time_shift_offset, time_shift_offset)
-
-            # choose background to mix in
-            if use_background or sample['label'] == self.SILENCE_LABEL:
-                background_index = np.random.randint(len(self.background_data))
-                background_samples = self.background_data[background_index]
-                if len(background_samples) <= self.model_settings['desired_samples']:
-                    raise ValueError(
-                        'Background sample is too short! Need more than %d'
-                        ' samples but only %d were found' %
-                        (self.model_settings['desired_samples'], len(
-                            background_samples))
-                    )
-                background_offset = np.random.randint(
-                    0, len(background_samples) -
-                       self.model_settings['desired_samples']
-                )
-                background_clipped = background_samples[background_offset:(
-                        background_offset + desired_samples
-                )]
-                background_reshaped = background_clipped.reshape(
-                    desired_samples)
-                if sample['label'] == self.SILENCE_LABEL:
-                    background_volume = np.random.uniform(0, 1)
-                elif np.random.uniform(0, 1) < self.background_frequency:
-                    background_volume = np.random.uniform(
-                        0, self.background_volume)
-                else:
-                    background_volume = 0
-            else:
-                background_reshaped = np.zeros(desired_samples)
-                background_volume = 0
-
-            # print(background_reshaped.shape, background_volume)
-            # librosa.output.write_wav('data/junk/bg_resh.wav', background_reshaped, self.sample_rate)
-            # if we want silence, mute out the main sample but leave the background
-            if sample['label'] == self.SILENCE_LABEL:
-                foreground_volume = 0
-            else:
-                foreground_volume = 1
-
-            input_data = {
-                'wav_filename': sample['file'],
-                'time_shift_padding': time_shift_padding,
-                'time_shift_offset': time_shift_offset,
-                'background_data': background_reshaped,
-                'background_volume': background_volume,
-                'foreground_volume': foreground_volume
-            }
-            # get processed audio
-            wav_result = self.audio_util.processing_audio(
-                input_data, normalize=True)
-            # feature extraction
-            feature = self.speech_features.cgram_(wav_result, 16000)
-            # feature = self.speech_features.mfcc(wav_result)
-            # feature = self.speech_features.mfcc_psf(wav_result)
-            feature = feature.flatten()
-            # print("feature shape: ", feature.shape)
-            # data.append(feature)
-            data[i - offset, :] = feature
             label_index = self.word_to_index[sample['label']]
-            # label_str.append(sample['label'])
-            labels[i - offset, label_index] = 1
-            # np.set_printoptions(threshold=np.nan)
-            # print(labels)
+            sample['label'] = label_index
+            data[i - offset] = sample
 
-        return data, labels
+        return data
 
-    def label_transform(self, labels):
-        n_labels = []
-        print(self.words_list)
-        for label in labels:
-            if label == '_silence_':
-                n_labels.append('_silence_')
-            elif label not in self.wanted_words:
-                n_labels.append('_unknown_')
+    def process_file(self, audiofiles, label):
+        if self.time_shift > 0:
+            time_shift_amount = np.random.randint(-self.time_shift, self.time_shift)
+        else:
+            time_shift_amount = 0
+        if time_shift_amount > 0:
+            time_shift_padding = [time_shift_amount, 0]
+            time_shift_offset = 0
+        else:
+            time_shift_padding = [0, -time_shift_amount]
+            time_shift_offset = -time_shift_amount
+
+        if self.use_background or label == self.SILENCE_INDEX:
+            background_index = np.random.randint(len(self.background_data))
+            background_samples = self.background_data[background_index]
+            if len(background_samples) <= self.model_settings['desired_samples']:
+                raise ValueError(
+                    'Background sample is too short! Need more than %d'
+                    ' samples but only %d were found' %
+                    (self.model_settings['desired_samples'], len(
+                        background_samples))
+                )
+            background_offset = np.random.randint(
+                0, len(background_samples) -
+                    self.model_settings['desired_samples']
+            )
+            background_clipped = background_samples[background_offset:(
+                    background_offset + self.desired_samples
+            )]
+            background_reshaped = background_clipped.reshape(
+                self.desired_samples)
+            if label == self.SILENCE_INDEX:
+                background_volume = np.random.uniform(0, 1)
+            elif np.random.uniform(0, 1) < self.background_frequency:
+                background_volume = np.random.uniform(
+                    0, self.background_volume)
             else:
-                n_labels.append(str(label))
-        return np.array(n_labels)
+                    background_volume = 0
+        else:
+            background_reshaped = np.zeros(self.desired_samples)
+            background_volume = 0
+            
+        if label == self.SILENCE_INDEX:
+            foreground_volume = 0
+        else:
+            foreground_volume = 1
 
-    def integer_encoding(self, labels):
-        label_encoder = LabelEncoder()
-        return label_encoder.fit_transform(self.label_transform(labels))
+        input_data = {
+            'wav_filename': audiofiles,
+            'time_shift_padding': time_shift_padding,
+            'time_shift_offset': time_shift_offset,
+            'background_data': background_reshaped,
+            'background_volume': background_volume,
+            'foreground_volume': foreground_volume
+        }
 
-    def onehot_encoder(self, labels):
-        onehot_encoder = OneHotEncoder(sparse=False, categories='auto')
-        integer_encoded = labels.reshape(len(labels), 1)
-        onehot = onehot_encoder.fit_transform(integer_encoded)
-        return onehot
+        wav_results = self.audio_util.processing_audio(input_data, normalize=True)
+        feature = self.speech_features.mfcc(wav_results)
+        return feature
+
+class AudioDataset(Dataset):
+    def __init__(self, wanted_words, audiofeature='mfcc'):
+        self.getdata = GetData(wanted_words=wanted_words, feature=audiofeature)
+        self.getdata.initialize()
+        self.dataset = self.getdata.get_data(how_many=-1, offset=0, mode='training')
+    
+    def __len__(self):
+        return len(self.dataset)
+
+    def  __getitem__(self, idx):
+        feature = self.getdata.process_file(self.dataset[idx]['file'], self.dataset[idx]['label'])
+        feature = feature[np.newaxis, ...]
+        return feature, self.dataset[idx]['label']

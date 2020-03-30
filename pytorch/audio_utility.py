@@ -3,7 +3,7 @@ import os
 import numpy as np
 from pycochleagram import cochleagram as cgram
 import librosa
-import tensorflow as tf
+
 
 class SpeechFeatures:
 
@@ -30,9 +30,8 @@ class SpeechFeatures:
 
 class AudioUtil:
 
-    def __init__(self, model_settings, normalize=True):
+    def __init__(self, model_settings):
         self.model_settings = model_settings
-        self.normalize=normalize
 
     def fix_audio_length(self, audio):
         desired_samples = self.model_settings['desired_samples']
@@ -40,8 +39,8 @@ class AudioUtil:
 
     def processing_audio(self, input_data, normalize=False):
         # read audio
-        y, sr = librosa.load(input_data['wav_filename'], sr=self.model_settings['sample_rate'])
-        
+        y, sr = librosa.load(input_data['wav_filename'],
+                             sr=self.model_settings['sample_rate'])
         y = self.fix_audio_length(y)
         # pre emphasis
         y = psf.sigproc.preemphasis(y)
@@ -58,7 +57,7 @@ class AudioUtil:
         background_mul = np.multiply(
             input_data['background_data'], input_data['background_volume'])
         audio_result = np.add(background_mul, sliced_foreground)
-        if self.normalize:
+        if normalize:
             audio_result = np.clip(audio_result, -1.0, 1.0)
         return audio_result
 
