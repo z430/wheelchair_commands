@@ -303,17 +303,17 @@ class GetData:
 
     def prepare_background_data(self):
         """Searches a folder for background noise audio, and loads it into memory.
-        It's expected that the background audio samples will be in a subdirectory
-        named '_background_noise_' inside the 'data_dir' folder, as .wavs that match
-        the sample rate of the training data, but can be much longer in duration.
-        If the '_background_noise_' folder doesn't exist at all, this isn't an
-        error, it's just taken to mean that no background noise augmentation should
-        be used. If the folder does exist, but it's empty, that's treated as an
-        error.
-        Returns:
-          List of raw PCM-encoded audio samples of background noise.
-        Raises:
-          Exception: If files aren't found in the folder.
+            It's expected that the background audio samples will be in a subdirectory
+            named '_background_noise_' inside the 'data_dir' folder, as .wavs that match
+            the sample rate of the training data, but can be much longer in duration.
+            If the '_background_noise_' folder doesn't exist at all, this isn't an
+            error, it's just taken to mean that no background noise augmentation should
+            be used. If the folder does exist, but it's empty, that's treated as an
+            error.
+            Returns:
+            List of raw PCM-encoded audio samples of background noise.
+            Raises:
+            Exception: If files aren't found in the folder.
         """
         self.background_data = []
         background_dir = os.path.join(
@@ -473,6 +473,89 @@ class GetData:
             # print(labels)
 
         return data, labels
+
+    def get_candidate(self, mode='training'):
+        return self.data_index[mode]
+
+    def get_features(self, sample, mode='training'):
+        desired_samples = self.model_settings['desired_samples']
+        use_background = self.background_data and (mode == 'training')
+        pick_deterministically = (mode != 'training')
+        time_shift = int((self.time_shift_ms * self.sample_rate) / 1000)
+        # print(sample)
+        # time shifting setting
+        if time_shift > 0:
+            time_shift_amount = np.random.randint(-time_shift, time_shift)
+        else:
+            time_shift_amount = 0
+        if time_shift_amount > 0:
+            time_shift_padding = [time_shift_amount, 0]
+            time_shift_offset = 0
+        else:
+            time_shift_padding = [0, -time_shift_amount]
+            time_shift_offset = -time_shift_amount
+
+        # print(time_shift_padding, time_shift_offset, time_shift_offset)
+
+        # choose background to mix in
+        if use_background or sample['label'] == self.SILENCE_LABEL:
+            background_index = np.random.randint(len(self.background_data))
+            background_samples = self.background_data[background_index]
+            if len(background_samples) <= self.model_settings['desired_samples']:
+                raise ValueError(
+                    'Background sample is too short! Need more than %d'
+                    ' samples but only %d were found' %
+                    (self.model_settings['desired_samples'], len(
+                        background_samples))
+                )
+            background_offset = np.random.randint(
+                0, len(background_samples) -
+                    self.model_settings['desired_samples']
+            )
+            background_clipped = background_samples[background_offset:(
+                    background_offset + desired_samples
+            )]
+            background_reshaped = background_clipped.reshape(
+                desired_samples)
+            if sample['label'] == self.SILENCE_LABEL:
+                background_volume = np.random.uniform(0, 1)
+            elif np.random.uniform(0, 1) < self.background_frequency:
+                background_volume = np.random.uniform(
+                    0, self.background_volume)
+            else:
+                background_volume = 0
+        else:
+            background_reshaped = np.zeros(desired_samples)
+            background_volume = 0
+
+        # print(background_reshaped.shape, background_volume)
+        # librosa.output.write_wav('data/junk/bg_resh.wav', background_reshaped, self.sample_rate)
+        # if we want silence, mute out the main sample but leave the background
+        if sample['label'] == self.SILENCE_LABEL:
+            foreground_volume = 0
+        else:
+            foreground_volume = 1
+
+        input_data = {
+            'wav_filename': sample['file'],
+            'time_shift_padding': time_shift_padding,
+            'time_shift_offset': time_shift_offset,
+            'background_data': background_reshaped,
+            'background_volume': background_volume,
+            'foreground_volume': foreground_volume
+        }
+        # get processed audio
+        wav_result = self.audio_util.processing_audio(
+            input_data, normalize=True)
+        # feature extraction
+        if self.audio_feature == 'cgram':
+            feature = self.audio_feature_extraction.cgram_(wav_result, self.sample_rate)
+        elif self.audio_feature == 'mfcc':
+            feature = self.audio_feature_extraction.mfcc(wav_result, self.sample_rate)
+        # feature = self.speech_features.mfcc(wav_result)
+        # feature = self.speech_features.mfcc_psf(wav_result)
+        feature = feature.flatten()
+        return sample['label'], feature
 
     def label_transform(self, labels):
         n_labels = []
