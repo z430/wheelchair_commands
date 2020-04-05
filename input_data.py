@@ -459,7 +459,7 @@ class GetData:
             if self.audio_feature == 'cgram':
                 feature = self.audio_feature_extraction.cgram_(wav_result, self.sample_rate)
             elif self.audio_feature == 'mfcc':
-                feature = self.audio_feature_extraction.mfcc(wav_result, self.sample_rate)
+                feature = self.audio_feature_extraction.mfcc(wav_result)
             # feature = self.speech_features.mfcc(wav_result)
             # feature = self.speech_features.mfcc_psf(wav_result)
             feature = feature.flatten()
