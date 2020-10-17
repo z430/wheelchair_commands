@@ -1,35 +1,30 @@
+import glob
 import hashlib
 import math
+import os
 import os.path
 import random
 import re
-import numpy as np
-import os
-import re
-import hashlib
-import random
-import math
 import sys
 import tarfile
+import urllib
 
-import glob
 import librosa
+import numpy as np
+import tensorflow as tf
+import tqdm
 from sklearn.preprocessing import LabelEncoder
 from sklearn.preprocessing import OneHotEncoder
-import tqdm
-
-from keras import utils
-import tensorflow as tf
-import urllib
 
 import audio_utility as audio_util
 
 
 class GetData:
 
-    def __init__(self, wanted_words='marvin', feature='cgram'):
+    def __init__(self, prepare_data=True, wanted_words='marvin', feature='cgram'):
 
         # don't change this parameter
+        self.prepare_data = prepare_data
         self.MAX_NUM_WAVS_PER_CLASS = 2 ** 27 - 1  # ~134MB
         self.RANDOM_SEED = 59185
         self.SILENCE_INDEX = 0
@@ -46,66 +41,53 @@ class GetData:
             os.makedirs(self.data_dir)
             self.maybe_download_and_extract_dataset(self.data_url, self.data_dir)
         self.background_volume = 0.1
-        self.background_frequency = 0.3
+        self.background_frequency = 0.8
         self.time_shift_ms = 50.0
         self.sample_rate = 16000
-        self.clip_duration_ms = 1000 / 1000  # ms to s
-        self.window_size = 32.0
-        self.window_stride = 10.0
-        self.dct_coefficient_count = 40
+        self.clip_duration_ms = 1000
 
-        self.silence_percentage = 30.0
-        self.unknown_percentage = 30.0
+        self.silence_percentage = 10.0
+        self.unknown_percentage = 10.0
         self.testing_percentage = 10.0
         self.validation_percentage = 10.0
-        self.how_many_training_steps = 15000
-        self.learning_rate = 0.001
-        self.batch_size = 100
-        self.summaries_dir = 'retrain_logs'
         self.wanted_words = sorted(wanted_words.split(','))
-        self.train_dir = 'wuw_train_logs'
 
-        self.model_architecture = 'conv'
         self.audio_feature = feature
-        self.audio_feature_extraction = audio_util.SpeechFeatures()
+        self.speech_features = audio_util.SpeechFeatures()
 
         # initialization
         self.model_settings = self.prepare_model_setting()
         self.audio_util = audio_util.AudioUtil(self.model_settings)
         self.words_list = self.prepare_word_list(self.wanted_words)
-        print(self.words_list)
         # get input shape
         self.input_shape = self.get_input_shape(feature)
 
     def get_input_shape(self, feature_name):
-        audio = np.ones(self.sample_rate * int(self.clip_duration_ms))
-        print(f"audio length: ")
+        audio = np.ones(self.sample_rate * self.clip_duration_ms // 1000)
         if feature_name is "cgram":
-            f = self.audio_feature_extraction.cgram_(audio, self.sample_rate)
+            f = self.speech_features.cgram_(audio, self.sample_rate)
             return f.shape
         elif feature_name is "mfcc":
-            f = self.audio_feature_extraction.mfcc(audio)
+            f = self.speech_features.mfcc(audio, self.sample_rate)
             return f.shape
         else:
             return None
 
     def initialize(self):
-        self.prepare_data_index(self.silence_percentage, self.unknown_percentage, self.wanted_words,
-                                self.validation_percentage, self.testing_percentage)
-        self.prepare_background_data()
+        if self.prepare_data:
+            self.prepare_data_index(self.silence_percentage, self.unknown_percentage, self.wanted_words,
+                                    self.validation_percentage, self.testing_percentage)
+            self.prepare_background_data()
 
     @staticmethod
     def prepare_word_list(wanted_words):
         return ['_silence_', '_unknown_'] + wanted_words
 
     def prepare_model_setting(self):
-        desired_samples = int(self.sample_rate * self.clip_duration_ms)
+        desired_samples = int(self.sample_rate * self.clip_duration_ms / 1000)
 
         return {
             'desired_samples': desired_samples,
-            'window_size_ms': self.window_size / 1000,
-            'window_stride_ms': self.window_stride / 1000,
-            'dct_coefficient_count': self.dct_coefficient_count,
             'audio_feature': self.audio_feature,
             'label_count': len(self.prepare_word_list(self.wanted_words)),
             'sample_rate': self.sample_rate
@@ -142,17 +124,15 @@ class GetData:
                     data_url, filepath, _progress)
             except:
                 tf.logging.error('Failed to download URL: %s to folder: %s', data_url,
-                                 filepath)
+                                filepath)
                 tf.logging.error('Please make sure you have enough free space and'
-                                 ' an internet connection')
+                                ' an internet connection')
                 raise
             print()
             statinfo = os.stat(filepath)
             tf.logging.info('Successfully downloaded %s (%d bytes)', filename,
                             statinfo.st_size)
             tarfile.open(filepath, 'r:gz').extractall(dest_directory)
-        else:
-            print("Dataset ready")
 
     def which_set(self, filename, validation_percentage, testing_percentage):
         """
@@ -303,17 +283,17 @@ class GetData:
 
     def prepare_background_data(self):
         """Searches a folder for background noise audio, and loads it into memory.
-            It's expected that the background audio samples will be in a subdirectory
-            named '_background_noise_' inside the 'data_dir' folder, as .wavs that match
-            the sample rate of the training data, but can be much longer in duration.
-            If the '_background_noise_' folder doesn't exist at all, this isn't an
-            error, it's just taken to mean that no background noise augmentation should
-            be used. If the folder does exist, but it's empty, that's treated as an
-            error.
-            Returns:
-            List of raw PCM-encoded audio samples of background noise.
-            Raises:
-            Exception: If files aren't found in the folder.
+        It's expected that the background audio samples will be in a subdirectory
+        named '_background_noise_' inside the 'data_dir' folder, as .wavs that match
+        the sample rate of the training data, but can be much longer in duration.
+        If the '_background_noise_' folder doesn't exist at all, this isn't an
+        error, it's just taken to mean that no background noise augmentation should
+        be used. If the folder does exist, but it's empty, that's treated as an
+        error.
+        Returns:
+          List of raw PCM-encoded audio samples of background noise.
+        Raises:
+          Exception: If files aren't found in the folder.
         """
         self.background_data = []
         background_dir = os.path.join(
@@ -362,16 +342,10 @@ class GetData:
         # Data and labels will be populated and returned.
         input_size = np.ones(self.sample_rate)
         # use GLCM features
-        if self.audio_feature == 'cgram':
-            input_size = self.audio_feature_extraction.cgram_(input_size, self.sample_rate)
-            input_size = input_size.flatten()
-            # print("input_size", input_size.shape)
-            input_size = input_size.shape[0]
-        elif self.audio_feature == 'mfcc':
-            input_size = self.audio_feature_extraction.mfcc(input_size, self.sample_rate)
-            input_size = input_size.flatten()
-            # print("input_size", input_size.shape)
-            input_size = input_size.shape[0]
+        input_size = self.speech_features.cgram_(input_size, 16000)
+        input_size = input_size.flatten()
+        # print("input_size", input_size.shape)
+        input_size = input_size.shape[0]
         data = np.zeros((sample_count, input_size))
         labels = np.zeros((sample_count, self.model_settings['label_count']))
         desired_samples = self.model_settings['desired_samples']
@@ -379,11 +353,11 @@ class GetData:
         pick_deterministically = (mode != 'training')
         time_shift = int((self.time_shift_ms * self.sample_rate) / 1000)
 
-        # label_str = []
+        # label_str = []Í
         # print(sample_count, data.shape, labels.shape, desired_samples, use_background, pick_deterministically)
 
         for i in tqdm.tqdm(range(offset, offset + sample_count)):
-            # for i in range(offset, offset + sample_count):
+        # for i in range(offset, offset + sample_count):
             if how_many == -1 or pick_deterministically:
                 sample_index = i
             else:
@@ -418,10 +392,10 @@ class GetData:
                     )
                 background_offset = np.random.randint(
                     0, len(background_samples) -
-                       self.model_settings['desired_samples']
+                    self.model_settings['desired_samples']
                 )
                 background_clipped = background_samples[background_offset:(
-                        background_offset + desired_samples
+                    background_offset + desired_samples
                 )]
                 background_reshaped = background_clipped.reshape(
                     desired_samples)
@@ -456,12 +430,8 @@ class GetData:
             wav_result = self.audio_util.processing_audio(
                 input_data, normalize=True)
             # feature extraction
-            if self.audio_feature == 'cgram':
-                feature = self.audio_feature_extraction.cgram_(wav_result, self.sample_rate)
-            elif self.audio_feature == 'mfcc':
-                feature = self.audio_feature_extraction.mfcc(wav_result)
-            # feature = self.speech_features.mfcc(wav_result)
-            # feature = self.speech_features.mfcc_psf(wav_result)
+            feature = self.speech_features.cgram_(wav_result, 16000)
+            # feature = self.speech_features.cgram_(wav_result)
             feature = feature.flatten()
             # print("feature shape: ", feature.shape)
             # data.append(feature)
@@ -473,89 +443,6 @@ class GetData:
             # print(labels)
 
         return data, labels
-
-    def get_candidate(self, mode='training'):
-        return self.data_index[mode]
-
-    def get_features(self, sample, mode='training'):
-        desired_samples = self.model_settings['desired_samples']
-        use_background = self.background_data and (mode == 'training')
-        pick_deterministically = (mode != 'training')
-        time_shift = int((self.time_shift_ms * self.sample_rate) / 1000)
-        # print(sample)
-        # time shifting setting
-        if time_shift > 0:
-            time_shift_amount = np.random.randint(-time_shift, time_shift)
-        else:
-            time_shift_amount = 0
-        if time_shift_amount > 0:
-            time_shift_padding = [time_shift_amount, 0]
-            time_shift_offset = 0
-        else:
-            time_shift_padding = [0, -time_shift_amount]
-            time_shift_offset = -time_shift_amount
-
-        # print(time_shift_padding, time_shift_offset, time_shift_offset)
-
-        # choose background to mix in
-        if use_background or sample['label'] == self.SILENCE_LABEL:
-            background_index = np.random.randint(len(self.background_data))
-            background_samples = self.background_data[background_index]
-            if len(background_samples) <= self.model_settings['desired_samples']:
-                raise ValueError(
-                    'Background sample is too short! Need more than %d'
-                    ' samples but only %d were found' %
-                    (self.model_settings['desired_samples'], len(
-                        background_samples))
-                )
-            background_offset = np.random.randint(
-                0, len(background_samples) -
-                    self.model_settings['desired_samples']
-            )
-            background_clipped = background_samples[background_offset:(
-                    background_offset + desired_samples
-            )]
-            background_reshaped = background_clipped.reshape(
-                desired_samples)
-            if sample['label'] == self.SILENCE_LABEL:
-                background_volume = np.random.uniform(0, 1)
-            elif np.random.uniform(0, 1) < self.background_frequency:
-                background_volume = np.random.uniform(
-                    0, self.background_volume)
-            else:
-                background_volume = 0
-        else:
-            background_reshaped = np.zeros(desired_samples)
-            background_volume = 0
-
-        # print(background_reshaped.shape, background_volume)
-        # librosa.output.write_wav('data/junk/bg_resh.wav', background_reshaped, self.sample_rate)
-        # if we want silence, mute out the main sample but leave the background
-        if sample['label'] == self.SILENCE_LABEL:
-            foreground_volume = 0
-        else:
-            foreground_volume = 1
-
-        input_data = {
-            'wav_filename': sample['file'],
-            'time_shift_padding': time_shift_padding,
-            'time_shift_offset': time_shift_offset,
-            'background_data': background_reshaped,
-            'background_volume': background_volume,
-            'foreground_volume': foreground_volume
-        }
-        # get processed audio
-        wav_result = self.audio_util.processing_audio(
-            input_data, normalize=True)
-        # feature extraction
-        if self.audio_feature == 'cgram':
-            feature = self.audio_feature_extraction.cgram_(wav_result, self.sample_rate)
-        elif self.audio_feature == 'mfcc':
-            feature = self.audio_feature_extraction.mfcc(wav_result, self.sample_rate)
-        # feature = self.speech_features.mfcc(wav_result)
-        # feature = self.speech_features.mfcc_psf(wav_result)
-        feature = feature.flatten()
-        return sample['label'], feature
 
     def label_transform(self, labels):
         n_labels = []

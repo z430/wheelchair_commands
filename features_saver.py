@@ -1,9 +1,9 @@
-import input_data
-import numpy as np
 import datetime
-import signal
-import sys
 import random  # feature versioning
+
+import numpy as np
+
+import input_data
 
 t = datetime.datetime.now()
 newdate = datetime.datetime.strftime(t, "%H_%M_%m_%d")
@@ -16,48 +16,31 @@ def save_experiment_data():
     saving experiment data is not storage efficient, but it is really useful when
     we only experiment with the model not the data.
     """
-    wanted_words = 'left,right,forward,backward,stop,go'
-    Data = input_data.GetData(wanted_words=wanted_words)
-    print(Data.validation_percentage)
-    Data.initialize()
+    wanted_words = "left,right,forward,backward,stop,go"
+    speech_feature = "cgram"
+    features = input_data.GetData(
+        wanted_words=wanted_words, feature=speech_feature)
+    # initialize dataset
+    features.initialize()
+    model_settings = features.model_settings
 
-    feature_name = 'glcm4_spec_{}'.format(version_number)
-    print(feature_name)
-
+    input_size = np.ones(features.sample_rate)
+    input_size = features.speech_features.cgram_(input_size, 16000)
+    model_name = f"{speech_feature}_{input_size.shape[0]}x{input_size.shape[1]}_{wanted_words.replace(',', '_')}"
     print("generating training, validation, testing data.")
-    x_train, y_train = Data.get_data(-1, 0, 'training')
-    x_val, y_val = Data.get_data(-1, 0, 'validation')
-    x_test, y_test = Data.get_data(-1, 0, 'testing')
+    print("input size: ", input_size.shape, model_name)
+    x_train, y_train = features.get_data(-1, 0, 'training')
+    np.save("data/x_train_{}.npy".format(model_name), x_train)
+    np.save("data/y_train_{}.npy".format(model_name), y_train)
 
-    training_size = Data.set_size('training')
-    testing_size = Data.set_size('testing')
-    print(training_size, testing_size)
+    x_val, y_val = features.get_data(-1, 0, 'validation')
+    np.save("data/x_val_{}.npy".format(model_name), x_val)
+    np.save("data/y_val_{}.npy".format(model_name), y_val)
 
-    print("saving the data")
-    np.save("data/junk/x_train_{}.npy".format(feature_name), x_train)
-    np.save("data/junk/y_train_{}.npy".format(feature_name), y_train)
-
-    np.save("data/junk/x_val_{}.npy".format(feature_name), x_val)
-    np.save("data/junk/y_val_{}.npy".format(feature_name), y_val)
-
-    np.save("data/junk/x_test_{}.npy".format(feature_name), x_test)
-    np.save("data/junk/y_test_{}.npy".format(feature_name), y_test)
-
-
-def signal_handler(self, sig, frame):
-    print("CTRL + C Detected")
-    sys.exit()
+    x_test, y_test = features.get_data(-1, 0, 'testing')
+    np.save("data/x_test_{}.npy".format(model_name), x_test)
+    np.save("data/y_test_{}.npy".format(model_name), y_test)
 
 
 if __name__ == '__main__':
-    signal.signal(signal.SIGINT, signal_handler)
     save_experiment_data()
-    signal.pause()
-    # np.set_printoptions(threshold=np.nan)
-    # y_train = np.load("data/junk/y_train_10_22_01_09.npy")
-    # y_test = np.load("data/junk/y_test_10_22_01_09.npy")
-    # print(y_train)
-    # wanted_words = 'yes,no,up,down,left,right,on,off,stop,go'
-    # data = input_data.GetData(prepare_data=False, wanted_words=wanted_words)
-    # print(data.integer_encoding(y_train))
-    # svm_glcm_matrix()

@@ -1,38 +1,41 @@
 import python_speech_features as psf
-import os
 import numpy as np
 from pycochleagram import cochleagram as cgram
 import librosa
-import tensorflow as tf
+
 
 class SpeechFeatures:
 
     def __init__(self):
         self.fs = 16000
-        self.n_fft = 512
-        self.win_length = int(self.fs * (30 / 1000))  # 40ms
-        self.hop_length = int(self.fs * (10 / 1000))  # 40ms
-        print(f"win length: {self.win_length} hop length: {self.hop_length}")
+
+        # mfcc 49x40
+        self.win_length = 0.04
+        self.hop_length = 0.02
+        self.numcep = 40
+        self.nfilt = 40
+        self.n_fft = 1024
 
     # Mel Frequency Cepstral Coefficient (MFCC)
-    def mfcc(self, sig):
-        num_filters = 10
-        mfcc = psf.mfcc(sig, winlen=0.030, winstep=0.01,
-                        nfft=512, nfilt=num_filters,
-                        numcep=40)
+    def mfcc(self, sig, fs):
+        # print(self.win_length, self.hop_length)
+        mfcc = psf.mfcc(
+            sig, winlen=self.win_length, nfft=self.n_fft,
+            winstep=self.hop_length, numcep=self.numcep, nfilt=self.nfilt
+        )
+        # print(mfcc.shape)
         return mfcc
 
     def cgram_(self, y, fs):
         cg = cgram.human_cochleagram(
-            y, fs, n=38, sample_factor=2, downsample=10, nonlinearity='power', strict=False)
+            y, fs, n=20, sample_factor=2, downsample=20, nonlinearity='power', strict=False)
         return cg
 
 
 class AudioUtil:
 
-    def __init__(self, model_settings, normalize=True):
+    def __init__(self, model_settings):
         self.model_settings = model_settings
-        self.normalize=normalize
 
     def fix_audio_length(self, audio):
         desired_samples = self.model_settings['desired_samples']
@@ -40,8 +43,8 @@ class AudioUtil:
 
     def processing_audio(self, input_data, normalize=False):
         # read audio
-        y, sr = librosa.load(input_data['wav_filename'], sr=self.model_settings['sample_rate'])
-        
+        y, sr = librosa.load(input_data['wav_filename'],
+                             sr=self.model_settings['sample_rate'])
         y = self.fix_audio_length(y)
         # pre emphasis
         y = psf.sigproc.preemphasis(y)
@@ -58,13 +61,7 @@ class AudioUtil:
         background_mul = np.multiply(
             input_data['background_data'], input_data['background_volume'])
         audio_result = np.add(background_mul, sliced_foreground)
-        if self.normalize:
+        if normalize:
             audio_result = np.clip(audio_result, -1.0, 1.0)
         return audio_result
 
-
-if __name__ == '__main__':
-    feature = SpeechFeatures()
-    sig = np.ones(16000)
-    mfcc = feature.mfcc(sig)
-    print(mfcc.shape)
