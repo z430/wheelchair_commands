@@ -1,3 +1,7 @@
+"""
+    This is using TF1.13
+"""
+
 import random
 import time
 
