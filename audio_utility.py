@@ -1,6 +1,6 @@
 import python_speech_features as psf
 import numpy as np
-from pycochleagram import cochleagram as cgram
+# from pycochleagram import cochleagram as cgram
 import librosa
 
 
@@ -26,10 +26,10 @@ class SpeechFeatures:
         # print(mfcc.shape)
         return mfcc
 
-    def cgram_(self, y, fs):
-        cg = cgram.human_cochleagram(
-            y, fs, n=20, sample_factor=2, downsample=20, nonlinearity='power', strict=False)
-        return cg
+    # def cgram_(self, y, fs):
+    #     cg = cgram.human_cochleagram(
+    #         y, fs, n=20, sample_factor=2, downsample=20, nonlinearity='power', strict=False)
+    #     return cg
 
 
 class AudioUtil:

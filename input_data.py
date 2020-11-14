@@ -1,3 +1,8 @@
+""" This class is for pick the train, val and test set
+    All the the data augmentation and data setting are defined
+    in here
+"""
+
 import glob
 import hashlib
 import math
@@ -56,22 +61,9 @@ class GetData:
         self.speech_features = audio_util.SpeechFeatures()
 
         # initialization
-        self.model_settings = self.prepare_model_setting()
-        self.audio_util = audio_util.AudioUtil(self.model_settings)
         self.words_list = self.prepare_word_list(self.wanted_words)
-        # get input shape
-        self.input_shape = self.get_input_shape(feature)
-
-    def get_input_shape(self, feature_name):
-        audio = np.ones(self.sample_rate * self.clip_duration_ms // 1000)
-        if feature_name is "cgram":
-            f = self.speech_features.cgram_(audio, self.sample_rate)
-            return f.shape
-        elif feature_name is "mfcc":
-            f = self.speech_features.mfcc(audio, self.sample_rate)
-            return f.shape
-        else:
-            return None
+        self.initialize()
+        # print(self.data_index)
 
     def initialize(self):
         if self.prepare_data:
@@ -82,16 +74,6 @@ class GetData:
     @staticmethod
     def prepare_word_list(wanted_words):
         return ['_silence_', '_unknown_'] + wanted_words
-
-    def prepare_model_setting(self):
-        desired_samples = int(self.sample_rate * self.clip_duration_ms / 1000)
-
-        return {
-            'desired_samples': desired_samples,
-            'audio_feature': self.audio_feature,
-            'label_count': len(self.prepare_word_list(self.wanted_words)),
-            'sample_rate': self.sample_rate
-        }
 
     def maybe_download_and_extract_dataset(self, data_url, dest_directory):
         """
@@ -310,158 +292,6 @@ class GetData:
             raise Exception(
                 'No background wav files were found in ' + search_path)
 
-    def get_data(self, how_many, offset, mode):
-        """
-            Gather samples from the data set, applying transformations as needed.
-            When the mode is 'training', a random selection of samples will be returned,
-            otherwise the first N clips in the partition will be used. This ensures that
-            validation always uses the same samples, reducing noise in the metrics.
-            Args:
-              how_many: Desired number of samples to return. -1 means the entire
-                contents of this partition.
-              offset: Where to start when fetching deterministically.
-              model_settings: Information about the current model being trained.
-              background_frequency: How many clips will have background noise, 0.0 to
-                1.0.
-              background_volume_range: How loud the background noise will be.
-              time_shift: How much to randomly shift the clips by in time.
-              mode: Which partition to use, must be 'training', 'validation', or
-                'testing'.
-              sess: TensorFlow session that was active when processor was created.
-            Returns:
-              List of sample data for the transformed samples, and list of label indexes
-            Raises:
-              ValueError: If background samples are too short.
-            """
-        # Pick one of the partitions to choose samples from.
-        candidates = self.data_index[mode]
-        if how_many == -1:
-            sample_count = len(candidates)
-        else:
-            sample_count = max(0, min(how_many, len(candidates) - offset))
-        # Data and labels will be populated and returned.
-        input_size = np.ones(self.sample_rate)
-        # use GLCM features
-        input_size = self.speech_features.cgram_(input_size, 16000)
-        input_size = input_size.flatten()
-        # print("input_size", input_size.shape)
-        input_size = input_size.shape[0]
-        data = np.zeros((sample_count, input_size))
-        labels = np.zeros((sample_count, self.model_settings['label_count']))
-        desired_samples = self.model_settings['desired_samples']
-        use_background = self.background_data and (mode == 'training')
-        pick_deterministically = (mode != 'training')
-        time_shift = int((self.time_shift_ms * self.sample_rate) / 1000)
+    def get_datafiles(self, mode):
+        return self.data_index[mode]
 
-        # label_str = []Í
-        # print(sample_count, data.shape, labels.shape, desired_samples, use_background, pick_deterministically)
-
-        for i in tqdm.tqdm(range(offset, offset + sample_count)):
-        # for i in range(offset, offset + sample_count):
-            if how_many == -1 or pick_deterministically:
-                sample_index = i
-            else:
-                sample_index = np.random.randint(len(candidates))
-
-            sample = candidates[sample_index]
-            # print(sample)
-            # time shifting setting
-            if time_shift > 0:
-                time_shift_amount = np.random.randint(-time_shift, time_shift)
-            else:
-                time_shift_amount = 0
-            if time_shift_amount > 0:
-                time_shift_padding = [time_shift_amount, 0]
-                time_shift_offset = 0
-            else:
-                time_shift_padding = [0, -time_shift_amount]
-                time_shift_offset = -time_shift_amount
-
-            # print(time_shift_padding, time_shift_offset, time_shift_offset)
-
-            # choose background to mix in
-            if use_background or sample['label'] == self.SILENCE_LABEL:
-                background_index = np.random.randint(len(self.background_data))
-                background_samples = self.background_data[background_index]
-                if len(background_samples) <= self.model_settings['desired_samples']:
-                    raise ValueError(
-                        'Background sample is too short! Need more than %d'
-                        ' samples but only %d were found' %
-                        (self.model_settings['desired_samples'], len(
-                            background_samples))
-                    )
-                background_offset = np.random.randint(
-                    0, len(background_samples) -
-                    self.model_settings['desired_samples']
-                )
-                background_clipped = background_samples[background_offset:(
-                    background_offset + desired_samples
-                )]
-                background_reshaped = background_clipped.reshape(
-                    desired_samples)
-                if sample['label'] == self.SILENCE_LABEL:
-                    background_volume = np.random.uniform(0, 1)
-                elif np.random.uniform(0, 1) < self.background_frequency:
-                    background_volume = np.random.uniform(
-                        0, self.background_volume)
-                else:
-                    background_volume = 0
-            else:
-                background_reshaped = np.zeros(desired_samples)
-                background_volume = 0
-
-            # print(background_reshaped.shape, background_volume)
-            # librosa.output.write_wav('data/junk/bg_resh.wav', background_reshaped, self.sample_rate)
-            # if we want silence, mute out the main sample but leave the background
-            if sample['label'] == self.SILENCE_LABEL:
-                foreground_volume = 0
-            else:
-                foreground_volume = 1
-
-            input_data = {
-                'wav_filename': sample['file'],
-                'time_shift_padding': time_shift_padding,
-                'time_shift_offset': time_shift_offset,
-                'background_data': background_reshaped,
-                'background_volume': background_volume,
-                'foreground_volume': foreground_volume
-            }
-            # get processed audio
-            wav_result = self.audio_util.processing_audio(
-                input_data, normalize=True)
-            # feature extraction
-            feature = self.speech_features.cgram_(wav_result, 16000)
-            # feature = self.speech_features.cgram_(wav_result)
-            feature = feature.flatten()
-            # print("feature shape: ", feature.shape)
-            # data.append(feature)
-            data[i - offset, :] = feature
-            label_index = self.word_to_index[sample['label']]
-            # label_str.append(sample['label'])
-            labels[i - offset, label_index] = 1
-            # np.set_printoptions(threshold=np.nan)
-            # print(labels)
-
-        return data, labels
-
-    def label_transform(self, labels):
-        n_labels = []
-        print(self.words_list)
-        for label in labels:
-            if label == '_silence_':
-                n_labels.append('_silence_')
-            elif label not in self.wanted_words:
-                n_labels.append('_unknown_')
-            else:
-                n_labels.append(str(label))
-        return np.array(n_labels)
-
-    def integer_encoding(self, labels):
-        label_encoder = LabelEncoder()
-        return label_encoder.fit_transform(self.label_transform(labels))
-
-    def onehot_encoder(self, labels):
-        onehot_encoder = OneHotEncoder(sparse=False, categories='auto')
-        integer_encoded = labels.reshape(len(labels), 1)
-        onehot = onehot_encoder.fit_transform(integer_encoded)
-        return onehot
