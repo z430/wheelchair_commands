@@ -65,7 +65,7 @@ def main():
     validation_ds = validation_ds.cache().prefetch(AUTOTUNE)
 
     for spectrogram, labels in training_ds.take(1):
-        input_shape = spectrogram.shape
+        input_shape = spectrogram.shape[1:]
         print(input_shape, labels)
 
     num_labels = len(features.words_list)
@@ -97,8 +97,8 @@ def main():
 
     EPOCHS = 1
     history = model.fit(
-        train_ds,
-        validation_data=val_ds,
+        training_ds,
+        validation_data=validation_ds,
         epochs=EPOCHS,
         callbacks=tf.keras.callbacks.EarlyStopping(verbose=1, patience=2),
     )
