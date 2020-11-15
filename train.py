@@ -16,53 +16,47 @@ import input_data
 au = AudioUtil(desired_samples=16000, sample_rate=16000, normalize=False)
 wanted_words = 'left,right,forward,backward,stop,go'
 features = input_data.GetData(wanted_words=wanted_words, feature="mfcc")
+AUTOTUNE = tf.data.experimental.AUTOTUNE
 
-
-def rosa_read(filename):
-    y, sr = librosa.load(filename.numpy().decode("UTF-8"), sr=16000)
-    y = librosa.util.fix_length(y, 16000)
-    return y
-
-
-def read_audio(filename, label):
-    # read audio
+def rosa_read(filename, label):
     waveform = tf.py_function(features.audio_transform, [filename, label], [tf.float32])
     waveform = tf.convert_to_tensor(waveform)
     waveform = tf.squeeze(waveform, axis=0)
-    # audio_binary = tf.io.read_file(filename)
-    # waveform, _ = tf.audio.decode_wav(audio_binary)
-    # waveform = tf.squeeze(waveform, axis=-1)
+    return waveform, label
 
-    # # padding if the audio less than 16k
-    # zero_padding = tf.zeros([16000] - tf.shape(waveform), dtype=tf.float32)
-    # waveform = tf.cast(waveform, tf.float32)
-    # waveform = tf.concat([waveform, zero_padding], 0)
+def get_spectrogram(waveform, label):
+    waveform = tf.cast(waveform, tf.float32)
+    spectrogram = tf.signal.stft(waveform, frame_length=255, frame_step=128)
+    spectrogram = tf.abs(spectrogram)
+    spectrogram = tf.expand_dims(spectrogram, axis=-1)
+    return spectrogram, label
 
-    return waveform, label # tf.one_hot(label, depth=8)
+def preprocess_dataset(dataset):
+    files_ds = tf.data.Dataset.from_tensor_slices(
+        (dataset['file'], dataset['label'])
+    )
+    output_ds = files_ds.map(rosa_read, num_parallel_calls=AUTOTUNE)
+    output_ds = output_ds.map(get_spectrogram, num_parallel_calls=AUTOTUNE)
+    return output_ds
+
 
 def main():
     """ ------------------- Features Configuration ------------------- """
-    all_files = features.get_datafiles("training")
+    training_files = features.get_datafiles('training')
+    validation_files = features.get_datafiles('validation')
 
     # transform the list dicts into dataframe
-    training_data = pd.DataFrame(all_files)
-    training_data["label"] = [features.word_to_index[label] for label in training_data["label"]]
-    # print(training_data.head(20))
-    # print(min(training_data["label"]), max(training_data["label"]))
-    training_data.to_csv("data/training_data.csv", index=False)
+    training_data = pd.DataFrame(training_files)
+    training_data['label'] = [features.word_to_index[label] for label in training_data['label']]
 
-    # consume the training data to tf dataset
-    training_dataset = tf.data.Dataset.from_tensor_slices(
-        (training_data['file'], training_data['label'])
-    )
-    file, label = next(iter(training_dataset))
-    print(read_audio(file, label))
+    validation_data = pd.DataFrame(validation_files)
+    validation_data['label'] = [features.word_to_index[label] for label in validation_data['label']]
 
-    for feat, targ in training_dataset.take(5):
-       print ('Features: {}, Target: {}'.format(feat, targ))
+    training_ds = preprocess_dataset(training_data)
+    validation_ds = preprocess_dataset(validation_data)
 
-
-
+    training_ds = training_ds.cache().prefetch(AUTOTUNE)
+    validation_ds = validation_ds.cache().prefetch(AUTOTUNE)
 
 
 if __name__ == '__main__':

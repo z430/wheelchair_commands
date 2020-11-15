@@ -298,7 +298,8 @@ class GetData:
         # print(filename, label)
         # read audio with librosa
         audio, sample_rate = librosa.load(filename.numpy().decode("UTF-8"), sr=self.sample_rate)
-
+        # fix the audio length
+        audio = librosa.util.fix_length(audio, self.desired_samples)
         # preemphasis -> make the audio gain higher
         audio = psf.sigproc.preemphasis(audio)
 
@@ -332,7 +333,7 @@ class GetData:
             background_clipped = background_samples[background_offset:(background_offset + self.desired_samples)]
             background_reshaped = background_clipped.reshape(self.desired_samples)
             if label.numpy() == self.SILENCE_INDEX:
-                background_volume = np.random.uint(0, 1)
+                background_volume = np.random.uniform(0, 1)
             elif np.random.uniform(0, 1) < self.background_frequency:
                 background_volume = np.random.uniform(0, self.background_volume)
             else:
