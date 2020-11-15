@@ -15,13 +15,10 @@ import tarfile
 import urllib
 
 import librosa
+import python_speech_features as psf
 import numpy as np
 import tensorflow as tf
 import tqdm
-from sklearn.preprocessing import LabelEncoder
-from sklearn.preprocessing import OneHotEncoder
-
-import audio_utility as audio_util
 
 
 class GetData:
@@ -45,31 +42,28 @@ class GetData:
         else:
             os.makedirs(self.data_dir)
             self.maybe_download_and_extract_dataset(self.data_url, self.data_dir)
+
+        # audio augmentation params
         self.background_volume = 0.1
         self.background_frequency = 0.8
         self.time_shift_ms = 50.0
         self.sample_rate = 16000
         self.clip_duration_ms = 1000
+        self.time_shift = int((self.time_shift_ms * self.sample_rate) / 1000)
+        self.desired_samples = int(self.sample_rate * (self.clip_duration_ms / 1000))
+        self.use_background_noise = True
 
         self.silence_percentage = 10.0
         self.unknown_percentage = 10.0
         self.testing_percentage = 10.0
         self.validation_percentage = 10.0
-        self.wanted_words = sorted(wanted_words.split(','))
-
-        self.audio_feature = feature
-        self.speech_features = audio_util.SpeechFeatures()
+        self.wanted_words = wanted_words.split(',')
 
         # initialization
         self.words_list = self.prepare_word_list(self.wanted_words)
-        self.initialize()
-        # print(self.data_index)
-
-    def initialize(self):
-        if self.prepare_data:
-            self.prepare_data_index(self.silence_percentage, self.unknown_percentage, self.wanted_words,
+        self.prepare_data_index(self.silence_percentage, self.unknown_percentage, self.wanted_words,
                                     self.validation_percentage, self.testing_percentage)
-            self.prepare_background_data()
+        self.prepare_background_data()
 
     @staticmethod
     def prepare_word_list(wanted_words):
@@ -294,4 +288,67 @@ class GetData:
 
     def get_datafiles(self, mode):
         return self.data_index[mode]
+
+    def audio_transform(self, filename, label):
+        """audio_transform.
+
+        :param filename: tf string audio path
+        :param label: the label of audio
+        """
+        # print(filename, label)
+        # read audio with librosa
+        audio, sample_rate = librosa.load(filename.numpy().decode("UTF-8"), sr=self.sample_rate)
+
+        # preemphasis -> make the audio gain higher
+        audio = psf.sigproc.preemphasis(audio)
+
+        # if the label is silence make the audio volume to 0
+        if label.numpy() == self.SILENCE_INDEX:
+            audio = audio * 0
+
+        # audio augmentation
+        # 1. time shifting
+        time_shift_amount = np.random.randint(-self.time_shift, self.time_shift)
+        if time_shift_amount > 0:
+            time_shift_padding = [time_shift_amount, 0]
+            time_shift_offset = 0
+        else:
+            time_shift_padding = [0, -time_shift_amount]
+            time_shift_offset = -time_shift_amount
+
+        padded_foreground = np.pad(audio, time_shift_padding, 'constant')
+        sliced_foreground = librosa.util.fix_length(
+            padded_foreground[time_shift_offset:],
+            self.desired_samples
+        )
+
+        # 2. select noise type and randomly select how big the volume is
+        if self.use_background_noise or label.numpy() == self.SILENCE_INDEX:
+            background_index = np.random.randint(len(self.background_data))
+            background_samples = self.background_data[background_index]
+            background_offset = np.random.randint(
+                0, len(background_samples - self.desired_samples)
+            )
+            background_clipped = background_samples[background_offset:(background_offset + self.desired_samples)]
+            background_reshaped = background_clipped.reshape(self.desired_samples)
+            if label.numpy() == self.SILENCE_INDEX:
+                background_volume = np.random.uint(0, 1)
+            elif np.random.uniform(0, 1) < self.background_frequency:
+                background_volume = np.random.uniform(0, self.background_volume)
+            else:
+                background_volume = 0
+        else:
+            background_reshaped = np.zeros(self.desired_samples)
+            background_volume = 0
+
+        # adjust the noisy signal volume
+        background_mul = np.multiply(background_reshaped, background_volume)
+        # mix audio with noisy signal
+        audio = np.add(background_mul, sliced_foreground)
+
+        return audio
+
+
+
+
 
