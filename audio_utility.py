@@ -1,6 +1,6 @@
 import python_speech_features as psf
 import numpy as np
-from pycochleagram import cochleagram as cgram
+# from pycochleagram import cochleagram as cgram
 import librosa
 
 
@@ -26,25 +26,27 @@ class SpeechFeatures:
         # print(mfcc.shape)
         return mfcc
 
-    def cgram_(self, y, fs):
-        cg = cgram.human_cochleagram(
-            y, fs, n=20, sample_factor=2, downsample=20, nonlinearity='power', strict=False)
-        return cg
+    # def cgram_(self, y, fs):
+    #     cg = cgram.human_cochleagram(
+    #         y, fs, n=20, sample_factor=2, downsample=20, nonlinearity='power', strict=False)
+    #     return cg
 
 
 class AudioUtil:
 
-    def __init__(self, model_settings):
-        self.model_settings = model_settings
+    def __init__(self, desired_samples, sample_rate, normalize=False):
+        self.normalize = normalize
+        self.desired_samples = desired_samples
+        self.sample_rate = sample_rate
 
     def fix_audio_length(self, audio):
-        desired_samples = self.model_settings['desired_samples']
+        desired_samples = self.desired_samples
         return librosa.util.fix_length(audio, desired_samples)
 
-    def processing_audio(self, input_data, normalize=False):
+    def processing_audio(self, input_data):
         # read audio
         y, sr = librosa.load(input_data['wav_filename'],
-                             sr=self.model_settings['sample_rate'])
+                             sr=self.sample_rate)
         y = self.fix_audio_length(y)
         # pre emphasis
         y = psf.sigproc.preemphasis(y)
@@ -61,7 +63,7 @@ class AudioUtil:
         background_mul = np.multiply(
             input_data['background_data'], input_data['background_volume'])
         audio_result = np.add(background_mul, sliced_foreground)
-        if normalize:
+        if self.normalize:
             audio_result = np.clip(audio_result, -1.0, 1.0)
         return audio_result
 
