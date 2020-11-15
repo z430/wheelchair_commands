@@ -328,7 +328,7 @@ class GetData:
             background_index = np.random.randint(len(self.background_data))
             background_samples = self.background_data[background_index]
             background_offset = np.random.randint(
-                0, len(background_samples - self.desired_samples)
+                0, len(background_samples) - self.desired_samples
             )
             background_clipped = background_samples[background_offset:(background_offset + self.desired_samples)]
             background_reshaped = background_clipped.reshape(self.desired_samples)
@@ -346,7 +346,7 @@ class GetData:
         background_mul = np.multiply(background_reshaped, background_volume)
         # mix audio with noisy signal
         audio = np.add(background_mul, sliced_foreground)
-
+        # print(audio.shape)
         return audio
 
 

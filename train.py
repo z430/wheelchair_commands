@@ -3,9 +3,11 @@
 import random
 import time
 
-import keras
 import numpy as np
 import tensorflow as tf
+from tensorflow.keras.layers.experimental import preprocessing
+from tensorflow.keras import layers
+from tensorflow.keras import models
 
 import pandas as pd
 from audio_utility import AudioUtil
@@ -55,9 +57,51 @@ def main():
     training_ds = preprocess_dataset(training_data)
     validation_ds = preprocess_dataset(validation_data)
 
+    batch_size = 16
+    training_ds = training_ds.batch(batch_size)
+    validation_ds = validation_ds.batch(batch_size)
+
     training_ds = training_ds.cache().prefetch(AUTOTUNE)
     validation_ds = validation_ds.cache().prefetch(AUTOTUNE)
 
+    for spectrogram, labels in training_ds.take(1):
+        input_shape = spectrogram.shape
+        print(input_shape, labels)
+
+    num_labels = len(features.words_list)
+    print(f"Input Shape: {input_shape}, len labels: {num_labels}")
+
+    norm_layer = preprocessing.Normalization()
+    norm_layer.adapt(training_ds.map(lambda x, _: x))
+
+    model = models.Sequential([
+        layers.Input(shape=input_shape),
+        preprocessing.Resizing(32, 32),
+        norm_layer,
+        layers.Conv2D(32, 3, activation='relu'),
+        layers.Conv2D(64, 3, activation='relu'),
+        layers.MaxPooling2D(),
+        layers.Dropout(0.25),
+        layers.Flatten(),
+        layers.Dense(128, activation='relu'),
+        layers.Dropout(0.5),
+        layers.Dense(num_labels),
+    ])
+
+    model.summary()
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(),
+        loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+        metrics=['accuracy'],
+    )
+
+    EPOCHS = 1
+    history = model.fit(
+        train_ds,
+        validation_data=val_ds,
+        epochs=EPOCHS,
+        callbacks=tf.keras.callbacks.EarlyStopping(verbose=1, patience=2),
+    )
 
 if __name__ == '__main__':
     main()
