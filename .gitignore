@@ -7,3 +7,4 @@ data/
 .vscode/settings.json
 .DS_Store
 **__pycache__**
+*.hdf5

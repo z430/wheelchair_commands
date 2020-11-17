@@ -1,5 +1,5 @@
 """ Training """
-
+import os
 import random
 import time
 
@@ -57,7 +57,7 @@ def main():
     training_ds = preprocess_dataset(training_data)
     validation_ds = preprocess_dataset(validation_data)
 
-    batch_size = 16
+    batch_size = 32
     training_ds = training_ds.batch(batch_size)
     validation_ds = validation_ds.batch(batch_size)
 
@@ -88,6 +88,15 @@ def main():
         layers.Dense(num_labels),
     ])
 
+    # callbacks
+    early_stopping = tf.keras.callbacks.EarlyStopping(verbose=1, patience=2)
+
+    checkpoint_path = "checkpoints/spectrogram/cp.ckpt"
+    checkpoint_dir = os.path.dirname(checkpoint_path)
+    checkpoints = tf.keras.callbacks.ModelCheckpoint(
+        filepath=checkpoint_path, save_weights_only=True, verbose=1
+    )
+
     model.summary()
     model.compile(
         optimizer=tf.keras.optimizers.Adam(),
@@ -100,7 +109,7 @@ def main():
         training_ds,
         validation_data=validation_ds,
         epochs=EPOCHS,
-        callbacks=tf.keras.callbacks.EarlyStopping(verbose=1, patience=2),
+        callbacks=,
     )
 
 if __name__ == '__main__':

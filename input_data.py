@@ -99,14 +99,14 @@ class GetData:
                 filepath, _ = urllib.request.urlretrieve(
                     data_url, filepath, _progress)
             except:
-                tf.logging.error('Failed to download URL: %s to folder: %s', data_url,
+                print('Failed to download URL: %s to folder: %s', data_url,
                                 filepath)
-                tf.logging.error('Please make sure you have enough free space and'
+                print('Please make sure you have enough free space and'
                                 ' an internet connection')
                 raise
             print()
             statinfo = os.stat(filepath)
-            tf.logging.info('Successfully downloaded %s (%d bytes)', filename,
+            print('Successfully downloaded %s (%d bytes)', filename,
                             statinfo.st_size)
             tarfile.open(filepath, 'r:gz').extractall(dest_directory)
 
