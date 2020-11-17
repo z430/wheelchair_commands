@@ -104,12 +104,12 @@ def main():
         metrics=['accuracy'],
     )
 
-    EPOCHS = 1
+    EPOCHS = 100
     history = model.fit(
         training_ds,
         validation_data=validation_ds,
         epochs=EPOCHS,
-        callbacks=,
+        callbacks=[early_stopping, checkpoints],
     )
 
 if __name__ == '__main__':
